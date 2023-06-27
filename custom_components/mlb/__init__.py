@@ -1,4 +1,5 @@
 """ MLB Team Status """
+import asyncio
 import logging
 from datetime import timedelta
 from datetime import datetime
@@ -77,25 +78,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         COORDINATOR: coordinator,
     }
 
-    hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass, config_entry):
     """Handle removal of an entry."""
-    try:
-        await hass.config_entries.async_forward_entry_unload(config_entry, "sensor")
-        _LOGGER.info("Successfully removed sensor from the " + DOMAIN + " integration")
-    except ValueError:
-        pass
-    return True
+
+    _LOGGER.debug("Attempting to unload entities from the %s integration", DOMAIN)
+
+    unload_ok = all(
+        await asyncio.gather(
+            *[
+                hass.config_entries.async_forward_entry_unload(config_entry, platform)
+                for platform in PLATFORMS
+            ]
+        )
+    )
+
+    if unload_ok:
+        _LOGGER.debug("Successfully removed entities from the %s integration", DOMAIN)
+        hass.data[DOMAIN].pop(config_entry.entry_id)
+
+    return unload_ok
 
 
-async def update_listener(hass, entry):
+async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Update listener."""
-    entry.data = entry.options
-    await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-    hass.async_add_job(hass.config_entries.async_forward_entry_setup(entry, "sensor"))
+
+    _LOGGER.debug("Attempting to reload entities from the %s integration", DOMAIN)
+
+    if config_entry.data == config_entry.options:
+        _LOGGER.debug("No changes detected not reloading entities.")
+        return
+
+    new_data = config_entry.options.copy()
+
+    hass.config_entries.async_update_entry(
+        entry=config_entry,
+        data=new_data,
+    )
+
+    await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 async def async_migrate_entry(hass, config_entry):
